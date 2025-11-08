@@ -12,12 +12,22 @@ const plugin: FastifyPluginAsync = async (fastify: FastifyInstance, opts) => {
     const cursor = q.cursor as string | undefined;
     // period and sort are accepted but for demo we do naive
     const period = q.period || '24h';
+    const protocol = q.protocol as string | undefined;
+    const sort = q.sort as string | undefined;
 
     const cache = await getCache<Record<string, TokenData>>('aggregated:tokens');
-    const arr: TokenData[] = cache ? Object.values(cache) : Object.values(agg.getTokens());
+  let arr: TokenData[] = cache ? Object.values(cache) : Object.values(agg.getTokens());
 
-    // naive sort: by volume desc if requested
-    if (q.sort === 'volume_desc') arr.sort((a, b) => (b.volume_sol || 0) - (a.volume_sol || 0));
+    // filtering by protocol
+    if (protocol) {
+      arr = arr.filter((x) => (x.protocol || '').toLowerCase().includes(String(protocol).toLowerCase()));
+    }
+
+    // sorting options: price_desc, price_asc, volume_desc, volume_asc
+    if (sort === 'price_desc') arr.sort((a, b) => (b.price_sol || 0) - (a.price_sol || 0));
+    else if (sort === 'price_asc') arr.sort((a, b) => (a.price_sol || 0) - (b.price_sol || 0));
+    else if (sort === 'volume_desc') arr.sort((a, b) => (b.volume_sol || 0) - (a.volume_sol || 0));
+    else if (sort === 'volume_asc') arr.sort((a, b) => (a.volume_sol || 0) - (b.volume_sol || 0));
 
     let start = 0;
     if (cursor) {

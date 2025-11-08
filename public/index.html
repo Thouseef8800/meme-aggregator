@@ -6,9 +6,17 @@
   <title>Meme Aggregator Demo</title>
   <style>
     body { font-family: Arial, Helvetica, sans-serif; margin: 20px; }
+    #ws-dot { width:12px; height:12px; border-radius:50%; display:inline-block; margin-left:6px; }
     #tokens { display: grid; grid-template-columns: repeat(auto-fill,minmax(260px,1fr)); gap: 12px; }
     .token { border: 1px solid #ddd; padding: 8px; border-radius: 6px; }
     .price { font-weight: 700; }
+    .flash {
+      animation: flash-bg 0.8s ease-in-out;
+    }
+    @keyframes flash-bg {
+      0% { background: rgba(255,255,0,0.9); }
+      100% { background: transparent; }
+    }
     header { display:flex; gap:12px; align-items:center; margin-bottom:12px }
   </style>
 </head>
@@ -16,6 +24,7 @@
   <header>
     <h2>Meme Aggregator — Live Demo</h2>
     <div id="status">(disconnected)</div>
+    <span id="ws-dot" title="ws status" style="background:crimson"></span>
   </header>
 
   <div>
@@ -24,8 +33,8 @@
   </div>
   <div id="tokens"></div>
 
-  <script src="https://cdn.socket.io/4.7.0/socket.io.min.js"></script>
   <script>
+    // Using native WebSocket client to match server 'ws' implementation
     const statusEl = document.getElementById('status');
     const tokensEl = document.getElementById('tokens');
     const refreshBtn = document.getElementById('refresh');
@@ -33,66 +42,161 @@
 
     function renderTokens(list) {
       tokensEl.innerHTML = '';
+      if (!list || list.length === 0) {
+        const msg = document.createElement('div');
+        msg.textContent = 'No tokens available at the moment.';
+        msg.style.color = '#666';
+        tokensEl.appendChild(msg);
+        return;
+      }
       for (const t of list) {
         const d = document.createElement('div');
         d.className = 'token';
         d.id = 'tok-' + t.token_address;
-        d.innerHTML = `<div><strong>${t.token_ticker || ''}</strong> — ${t.token_name || ''}</div>
-          <div class="price">${(t.price_sol || 0).toFixed ? (t.price_sol||0).toFixed(6) : t.price_sol}</div>
-          <div>Volume: ${t.volume_sol || 0}</div>
-          <div>Protocol: ${t.protocol || ''}</div>`;
+          // Load persisted price if available
+          const persisted = loadPersistedPrices();
+          const persistedPrice = persisted[t.token_address];
+          const displayPrice = (t.price_sol !== undefined && t.price_sol !== null) ? t.price_sol : persistedPrice;
+          d.innerHTML = `<div><strong>${t.token_ticker || ''}</strong> — ${t.token_name || ''}</div>
+            <div class="price">${(displayPrice || 0).toFixed ? (displayPrice||0).toFixed(6) : displayPrice}</div>
+            <div>Volume: ${t.volume_sol || 0}</div>
+            <div>Protocol: ${t.protocol || ''}</div>`;
         tokensEl.appendChild(d);
       }
     }
 
+      function loadPersistedPrices() {
+        try {
+          const raw = localStorage.getItem('lastPrices');
+          if (!raw) return {};
+          return JSON.parse(raw);
+        } catch { return {}; }
+      }
+
+      function savePersistedPrice(address, price) {
+        try {
+          const cur = loadPersistedPrices();
+          cur[address] = price;
+          localStorage.setItem('lastPrices', JSON.stringify(cur));
+        } catch {}
+      }
+
     async function loadHttp() {
       statusEl.textContent = '(loading via HTTP)';
       try {
-        const res = await fetch('/tokens?limit=30');
-        const j = await res.json();
-        renderTokens(j.items || []);
-        statusEl.textContent = '(loaded HTTP)';
+          const res = await fetch('/tokens?limit=30');
+          if (!res.ok) {
+            const text = await res.text();
+            statusEl.textContent = `(HTTP ${res.status})`;
+            console.error('Tokens HTTP error:', res.status, text);
+            tokensEl.innerHTML = '';
+            const err = document.createElement('div');
+            err.style.color = 'crimson';
+            err.textContent = `Error fetching tokens: ${res.status}`;
+            tokensEl.appendChild(err);
+            return;
+          }
+          const j = await res.json();
+          renderTokens(j.items || []);
+          statusEl.textContent = '(loaded HTTP)';
       } catch (e) {
         statusEl.textContent = '(HTTP error)';
         console.error(e);
       }
     }
 
-    let socket;
-    function connectWS() {
-      if (socket && socket.connected) return;
-      socket = io();
-      socket.on('connect', () => { statusEl.textContent = '(ws connected)'; socket.emit('subscribe:snapshot'); });
-      socket.on('disconnect', () => { statusEl.textContent = '(ws disconnected)'; });
-      socket.on('snapshot', (payload) => {
-        // payload is a map { addr: token }
-        const arr = Object.values(payload || {});
-        renderTokens(arr.slice(0,30));
-      });
-      socket.on('tokens:update', (updates) => {
-        // apply updates to DOM
-        (updates||[]).forEach(u => {
-          const nodeId = 'tok-' + u.token_address;
-          let node = document.getElementById(nodeId);
-          if (!node) {
-            // create
-            const d = document.createElement('div');
-            d.className = 'token';
-            d.id = nodeId;
-            d.innerHTML = `<div><strong>${u.token_ticker||''}</strong> — ${u.token_name||''}</div>
-              <div class="price">${(u.price_sol||0).toFixed ? (u.price_sol||0).toFixed(6) : u.price_sol}</div>
-              <div>Volume: ${u.volume_sol || 0}</div>
-              <div>Protocol: ${u.protocol || ''}</div>`;
-            tokensEl.prepend(d);
-          } else {
-            node.querySelector('.price').textContent = (u.price_sol||0).toFixed ? (u.price_sol||0).toFixed(6) : u.price_sol;
-          }
-        });
+    let ws;
+    let reconnectAttempts = 0;
+    const maxReconnectDelay = 30000; // 30s
+
+    function applyPriceUpdate(node, newPrice) {
+      const priceEl = node.querySelector('.price');
+      if (!priceEl) return;
+      // parse previous price if present
+      const prev = parseFloat(priceEl.textContent) || 0;
+      const formatted = (newPrice || 0).toFixed ? (newPrice || 0).toFixed(6) : String(newPrice || 0);
+      priceEl.textContent = formatted;
+      // flash when price changed
+      if (newPrice !== undefined && newPrice !== null && prev !== newPrice) {
+        node.classList.add('flash');
+        setTimeout(() => node.classList.remove('flash'), 800);
+      }
+      // persist last-known price for this token
+      const id = node.id && node.id.replace(/^tok-/, '');
+      if (id) savePersistedPrice(id, newPrice);
+    }
+
+    function handleUpdates(updates) {
+      (updates||[]).forEach(u => {
+        const nodeId = 'tok-' + u.token_address;
+        let node = document.getElementById(nodeId);
+        if (!node) {
+          const d = document.createElement('div');
+          d.className = 'token';
+          d.id = nodeId;
+          d.innerHTML = `<div><strong>${u.token_ticker||''}</strong> — ${u.token_name||''}</div>
+            <div class="price">${(u.price_sol||0).toFixed ? (u.price_sol||0).toFixed(6) : u.price_sol}</div>
+            <div>Volume: ${u.volume_sol || 0}</div>
+            <div>Protocol: ${u.protocol || ''}</div>`;
+          tokensEl.prepend(d);
+          // persist price for newly created node
+          savePersistedPrice(u.token_address, u.price_sol);
+        } else {
+          applyPriceUpdate(node, u.price_sol);
+        }
       });
     }
 
-    refreshBtn.addEventListener('click', loadHttp);
-    connectBtn.addEventListener('click', connectWS);
+    function connectWS() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+
+      const url = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/live';
+      ws = new WebSocket(url);
+
+      const wsDot = document.getElementById('ws-dot');
+      function setDot(color) { if (wsDot) wsDot.style.background = color; }
+
+      ws.addEventListener('open', () => {
+        statusEl.textContent = '(ws connected)';
+        setDot('limegreen');
+        reconnectAttempts = 0;
+        ws.send(JSON.stringify({ action: 'subscribe' }));
+      });
+
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.event === 'tokens:update') {
+            handleUpdates(msg.data || []);
+          } else if (msg.event === 'subscribed') {
+            console.info('WS subscribed', msg.data);
+          } else if (msg.event === 'snapshot') {
+            const arr = Object.values(msg.data || {});
+            renderTokens(arr.slice(0,30));
+          }
+        } catch (err) {
+          console.error('WS message parse error', err);
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        statusEl.textContent = '(ws disconnected)';
+        setDot('crimson');
+        // attempt reconnect with backoff
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), maxReconnectDelay);
+        reconnectAttempts++;
+        statusEl.textContent = `(ws disconnected) reconnecting in ${Math.round(delay/1000)}s`;
+        const timeoutId = setTimeout(() => {
+          connectWS();
+        }, delay);
+        // do not keep timer alive in older browsers
+        try { if (typeof timeoutId === 'object' && timeoutId && (timeoutId).unref) (timeoutId).unref(); } catch {}
+      });
+      ws.addEventListener('error', (e) => { statusEl.textContent = '(ws error)'; setDot('orange'); console.error(e); });
+    }
+
+  refreshBtn.addEventListener('click', loadHttp);
+  connectBtn.addEventListener('click', connectWS);
 
     // auto-load small set
     loadHttp();

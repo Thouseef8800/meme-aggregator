@@ -1,57 +1,90 @@
 import Fastify from 'fastify';
-import fastifySocket from 'fastify-socket.io';
+import path from 'path';
+import fastifyStatic from '@fastify/static';
 import tokensRoutes from './routes/tokens';
 import { Aggregator } from './aggregator';
 import { initCache } from './cache';
 import config from './config';
-import path from 'path';
-import fastifyStatic from '@fastify/static';
+import { WebSocketServer, WebSocket } from 'ws';
 
 const server = Fastify({ logger: true });
 
 async function main() {
+  // Initialize Redis or in-memory cache
   await initCache();
 
-  // serve demo client from /public
+  // Serve static frontend files (optional)
   server.register(fastifyStatic, {
     root: path.join(__dirname, '..', 'public'),
     prefix: '/',
   });
 
-  await server.register(fastifySocket);
-
-  // create aggregator and attach to server instance
-  const aggregator = new Aggregator();
-  // attach aggregator for route handlers
-  (server as any).aggregator = aggregator;
-
+  // Attach token routes
   server.register(tokensRoutes, { prefix: '/tokens' });
 
-  // socket.io events
-  server.io.on('connection', socket => {
-    server.log.info('socket connected: ' + socket.id);
-    // send initial snapshot
-    socket.on('subscribe:snapshot', async () => {
-      const snapshot = aggregator.getTokens();
-      socket.emit('snapshot', snapshot);
+  // --- WebSocket setup using 'ws' ---
+  const wss = new WebSocketServer({ noServer: true });
+
+  // Handle HTTP → WebSocket upgrade
+  server.server.on('upgrade', (req, socket, head) => {
+    if (req.url === '/live') {
+      wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
+        wss.emit('connection', ws, req);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  // Handle WebSocket connections
+  wss.on('connection', (ws: WebSocket) => {
+    server.log.info('WebSocket client connected');
+
+  ws.on('message', (msg: any) => {
+      try {
+        const data = JSON.parse(msg.toString());
+        if (data.action === 'subscribe') {
+          ws.send(JSON.stringify({ event: 'subscribed', data: { window: '24h' } }));
+          try {
+            const snapshot = aggregator.getTokens();
+            ws.send(JSON.stringify({ event: 'snapshot', data: snapshot }));
+          } catch (e) {
+            // ignore if aggregator not ready
+          }
+        }
+      } catch {
+        // Ignore malformed messages
+      }
     });
 
-    socket.on('disconnect', () => {
-      server.log.info('socket disconnected: ' + socket.id);
+    ws.on('close', () => {
+      server.log.info('WebSocket client disconnected');
     });
   });
 
+  // --- Aggregator setup (for fetching and broadcasting token updates) ---
+  const aggregator = new Aggregator();
+  (server as any).aggregator = aggregator;
+
+  // Broadcast token updates to all WS clients
   aggregator.on('update', (updates) => {
-    server.io.emit('tokens:update', updates);
+    const message = JSON.stringify({ event: 'tokens:update', data: updates });
+    for (const client of wss.clients) {
+      if (client.readyState === 1) {
+        client.send(message);
+      }
+    }
   });
 
   aggregator.on('snapshot', (snapshot) => {
-    // for demo we do not flood sockets with every snapshot; in real app use finer control
+    // Optional: could send snapshot to clients here
   });
 
+  // Start Fastify HTTP server
   try {
     await server.listen({ port: config.port, host: '0.0.0.0' });
-    server.log.info(`Server listening on ${config.port}`);
+    server.log.info(`HTTP Server running at http://localhost:${config.port}`);
+    server.log.info(`WebSocket endpoint available at ws://localhost:${config.port}/live`);
   } catch (err) {
     server.log.error(err as Error);
     process.exit(1);

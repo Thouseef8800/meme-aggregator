@@ -24,6 +24,10 @@ export class Aggregator extends EventEmitter {
   async loadAndSchedule() {
     await this.fetchAndUpdate();
     this.timer = setInterval(() => this.fetchAndUpdate(), config.pollInterval * 1000);
+    // Prevent the aggregator interval from keeping the Node process alive (helps tests exit cleanly)
+    try {
+      if (this.timer && typeof (this.timer as any).unref === 'function') (this.timer as any).unref();
+    } catch {}
   }
 
   stop() {
@@ -41,53 +45,60 @@ export class Aggregator extends EventEmitter {
         this.emit('snapshot', this.tokens);
       }
 
-      // Fetch from two APIs
-      const [ds, gt] = await Promise.allSettled([
-        getWithRetry<any>('https://api.dexscreener.com/latest/dex/search?q=solana'),
-        getWithRetry<any>('https://api.geckoterminal.com/api/v2/networks/solana/tokens')
-      ]);
+      // Fetch from primary API (DexScreener). GeckoTerminal endpoint was unreliable/404 — using DexScreener as primary source.
+      let ds: any = null;
+      try {
+        ds = await getWithRetry<any>('https://api.dexscreener.com/latest/dex/search?q=solana');
+      } catch (e) {
+        // getWithRetry will abort on 4xx; log and continue with cached data
+        console.warn('DexScreener fetch failed:', (e as Error).message);
+      }
 
       const newMap: TokenMap = { ...(cached || {}) };
 
-      if (ds.status === 'fulfilled') {
-        const items = ds.value?.pairs || ds.value?.tokens || [];
-        for (const it of items) {
-          // try to pick address field; structure may vary
-          const addr = it?.tokenAddress || it?.address || it?.id;
-          if (!addr) continue;
-          const key = String(addr).toLowerCase();
-          const td: TokenData = {
-            token_address: key,
-            token_name: it.name || it?.tokenName || it?.token_name,
-            token_ticker: it.symbol || it?.tokenTicker || it?.token_ticker,
-            price_sol: Number(it.priceUsd) || undefined,
-            volume_sol: Number(it.volume) || undefined,
-            protocol: it.dex || it.protocol || 'DexScreener',
-            source: 'dexscreener',
-            last_updated: Date.now(),
-          };
-          newMap[key] = newMap[key] ? mergeToken(newMap[key], td) : td;
-        }
-      }
+      if (ds) {
+        // Diagnostic: log top-level keys and basic info to help map response shapes
+        try {
+          const topKeys = Object.keys(ds || {}).slice(0, 10);
+          console.info('DexScreener response keys:', topKeys);
+        } catch {}
 
-      if (gt.status === 'fulfilled') {
-        const items = gt.value?.data || gt.value || [];
-        for (const it of items) {
-          const addr = it?.tokenAddress || it?.address || it?.id || it?.token_address;
-          if (!addr) continue;
-          const key = String(addr).toLowerCase();
-          const td: TokenData = {
-            token_address: key,
-            token_name: it.name || it?.tokenName,
-            token_ticker: it.symbol || it?.tokenTicker,
-            price_sol: Number(it.price) || undefined,
-            volume_sol: Number(it.volume) || undefined,
-            protocol: it.protocol || 'GeckoTerminal',
-            source: 'geckoterminal',
-            last_updated: Date.now(),
-          };
-          newMap[key] = newMap[key] ? mergeToken(newMap[key], td) : td;
+        const items = ds?.pairs || ds?.tokens || ds?.data || ds?.pairs || [];
+        console.info(`DexScreener returned ${Array.isArray(items) ? items.length : 0} items`);
+        if (Array.isArray(items) && items.length > 0) {
+          try { console.info('Sample item:', JSON.stringify(items[0]).slice(0, 800)); } catch {}
         }
+        for (const it of items) {
+          // Some responses are pair-based with baseToken and quoteToken. Add both tokens separately.
+          const tokenCandidates: any[] = [];
+          if (it.baseToken) tokenCandidates.push({ token: it.baseToken, role: 'base' });
+          if (it.quoteToken) tokenCandidates.push({ token: it.quoteToken, role: 'quote' });
+          if (it.token) tokenCandidates.push({ token: it.token, role: 'token' });
+          // Some responses return token objects directly with address/contractAddress
+          if (it.address || it.contractAddress || it.symbol) tokenCandidates.push({ token: it, role: 'direct' });
+
+          for (const cand of tokenCandidates) {
+            const tokenObj = cand.token || {};
+            const addr = tokenObj.address || tokenObj.contractAddress;
+            if (!addr) continue;
+            const key = String(addr).toLowerCase();
+            const td: TokenData = {
+              token_address: key,
+              token_name: tokenObj.name || tokenObj.tokenName || it.name || it.pairName,
+              token_ticker: tokenObj.symbol || tokenObj.tokenTicker || it.symbol,
+              price_sol: Number(it.priceUsd || it.price || tokenObj.price || tokenObj.priceUsd) || undefined,
+              volume_sol: Number(it.volume?.h24 || it.volume || tokenObj.usd24hVolume || tokenObj.volume) || undefined,
+              protocol: it.dex || it.dexId || it.protocol || it.pairName || 'DexScreener',
+              source: 'dexscreener',
+              last_updated: Date.now(),
+            };
+            newMap[key] = newMap[key] ? mergeToken(newMap[key], td) : td;
+          }
+        }
+        const keys = Object.keys(newMap);
+        console.info(`Aggregated token keys count after processing items: ${keys.length}`);
+      } else {
+        console.warn('No DexScreener data available for this poll. Using cached tokens if any.');
       }
 
       // Compare previous tokens for changes
@@ -101,10 +112,11 @@ export class Aggregator extends EventEmitter {
 
       this.tokens = newMap;
       await setCache('aggregated:tokens', this.tokens, config.cacheTTL);
-
-      if (updates.length) this.emit('update', updates);
-      // Also emit a snapshot periodically
-      this.emit('snapshot', this.tokens);
+  const total = Object.keys(this.tokens).length;
+  console.info(`Aggregator: ${total} tokens aggregated, ${updates.length} updates detected`);
+  if (updates.length) this.emit('update', updates);
+  // Also emit a snapshot periodically
+  this.emit('snapshot', this.tokens);
     } catch (err) {
       console.error('Aggregator fetch error', err);
     }
