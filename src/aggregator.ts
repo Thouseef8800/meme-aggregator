@@ -85,18 +85,33 @@ export class Aggregator extends EventEmitter {
             const td: TokenData = {
               token_address: key,
               token_name: tokenObj.name || tokenObj.tokenName || it.name || it.pairName,
-              token_ticker: tokenObj.symbol || tokenObj.tokenTicker || it.symbol,
-              price_sol: Number(it.priceUsd || it.price || tokenObj.price || tokenObj.priceUsd) || undefined,
-              volume_sol: Number(it.volume?.h24 || it.volume || tokenObj.usd24hVolume || tokenObj.volume) || undefined,
-              protocol: it.dex || it.dexId || it.protocol || it.pairName || 'DexScreener',
+                token_ticker: (tokenObj.symbol || tokenObj.tokenTicker || it.symbol || '').toUpperCase(),
+                price_sol: Number(it.priceUsd || it.price || tokenObj.price || tokenObj.priceUsd) || undefined,
+                volume_sol: Number(it.volume?.h24 || it.volume || tokenObj.usd24hVolume || tokenObj.volume) || undefined,
+                protocol: it.dex || it.dexId || it.protocol || it.pairName || 'DexScreener',
+                market_cap: Number(tokenObj.marketCap || tokenObj.market_cap || it.marketCap || it.market_cap) || undefined,
+                canonical_symbol: (tokenObj.symbol || tokenObj.tokenTicker || it.symbol || '').toUpperCase(),
               source: 'dexscreener',
               last_updated: Date.now(),
             };
             newMap[key] = newMap[key] ? mergeToken(newMap[key], td) : td;
           }
         }
-        const keys = Object.keys(newMap);
-        console.info(`Aggregated token keys count after processing items: ${keys.length}`);
+          // Post-process: mark primary address for canonical symbols (choose by highest volume)
+          const symbolGroups: Record<string, { addr: string; vol: number }> = {};
+          for (const [addr, data] of Object.entries(newMap)) {
+            const sym = (data.canonical_symbol || data.token_ticker || '').toUpperCase();
+            const vol = Number(data.volume_sol || 0);
+            if (!sym) continue;
+            if (!symbolGroups[sym] || vol > symbolGroups[sym].vol) symbolGroups[sym] = { addr, vol };
+          }
+          for (const [sym, entry] of Object.entries(symbolGroups)) {
+            const a = entry.addr;
+            if (newMap[a]) (newMap[a] as any).is_primary_for_symbol = true;
+          }
+
+          const keys = Object.keys(newMap);
+          console.info(`Aggregated token keys count after processing items: ${keys.length}`);
       } else {
         console.warn('No DexScreener data available for this poll. Using cached tokens if any.');
       }

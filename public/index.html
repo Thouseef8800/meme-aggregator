@@ -29,6 +29,16 @@
 
   <div>
     <button id="refresh">Load tokens (HTTP)</button>
+    <label for="protocol">Protocol:</label>
+    <input id="protocol" placeholder="e.g. solana" style="width:120px" />
+    <label for="sort">Sort:</label>
+    <select id="sort">
+      <option value="">(none)</option>
+      <option value="price_desc">Price ↓</option>
+      <option value="price_asc">Price ↑</option>
+      <option value="volume_desc">Volume ↓</option>
+      <option value="volume_asc">Volume ↑</option>
+    </select>
     <button id="connect">Connect WS</button>
   </div>
   <div id="tokens"></div>
@@ -84,7 +94,13 @@
     async function loadHttp() {
       statusEl.textContent = '(loading via HTTP)';
       try {
-          const res = await fetch('/tokens?limit=30');
+          const proto = (document.getElementById('protocol') && document.getElementById('protocol').value) || '';
+          const sort = (document.getElementById('sort') && document.getElementById('sort').value) || '';
+          const params = new URLSearchParams();
+          params.set('limit', '30');
+          if (proto) params.set('protocol', proto);
+          if (sort) params.set('sort', sort);
+          const res = await fetch('/tokens?' + params.toString());
           if (!res.ok) {
             const text = await res.text();
             statusEl.textContent = `(HTTP ${res.status})`;
