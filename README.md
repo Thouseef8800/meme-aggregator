@@ -3,7 +3,7 @@
 This repository contains a prototype Real-time Data Aggregation Service for meme coins.
 
 <!-- CI status badge: replace <owner> and <repo> with your GitHub values -->
-[![CI](https://github.com/<owner>/<repo>/actions/workflows/nodejs-test.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/nodejs-test.yml)
+[![CI](https://github.com/Thouseef8800/meme-aggregator/actions/workflows/nodejs-test.yml/badge.svg)](https://github.com/Thouseef8800/meme-aggregator/actions/workflows/nodejs-test.yml)
 
 See `DELIVERY.md` for final packaging instructions and a short demo script to record the 1–2 minute video.
 

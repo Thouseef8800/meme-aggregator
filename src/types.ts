@@ -2,6 +2,8 @@ export interface TokenData {
   token_address: string;
   token_name?: string;
   token_ticker?: string;
+  canonical_symbol?: string;
+  market_cap?: number;
   price_sol?: number;
   market_cap_sol?: number;
   volume_sol?: number;

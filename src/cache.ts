@@ -25,7 +25,10 @@ export async function setCache(key: string, value: any, ttlSeconds?: number) {
   } else {
     memoryCache.set(key, str);
     if (ttlSeconds) {
-      setTimeout(() => memoryCache.delete(key), ttlSeconds * 1000);
+      const t = setTimeout(() => memoryCache.delete(key), ttlSeconds * 1000);
+      try {
+        if (t && typeof (t as any).unref === 'function') (t as any).unref();
+      } catch {}
     }
   }
 }
