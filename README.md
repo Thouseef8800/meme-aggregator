@@ -7,6 +7,22 @@ This repository contains a prototype Real-time Data Aggregation Service for meme
 
 See `DELIVERY.md` for final packaging instructions and a short demo script to record the 1–2 minute video.
 
+Deployed URL (optional)
+-----------------------
+If you deploy this service to a free host (Render, Railway, Fly, or Heroku), add the public URL here. Example:
+
+- Deployed: https://meme-aggregator.example.com  (replace with actual URL after deploy)
+
+Quick deploy (Render)
+---------------------
+1. Create a new Web Service on Render (free tier).
+2. Connect your GitHub repo and choose the `master` branch (or the branch containing your PR).
+3. Build command: `npm run build`
+4. Start command: `npm start`
+5. Set environment variables (optional): `CACHE_TTL_SECONDS`, `REDIS_URL`, `PORT`.
+
+Once deployed, paste the URL above so the README shows the public endpoint for the demo.
+
 Tech: Node.js + TypeScript + Fastify + Socket.io. Redis is optional (falls back to in-memory).
 
 Quick start (local):
