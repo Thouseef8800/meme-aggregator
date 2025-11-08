@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Meme Aggregator Demo</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; }
+    #tokens { display: grid; grid-template-columns: repeat(auto-fill,minmax(260px,1fr)); gap: 12px; }
+    .token { border: 1px solid #ddd; padding: 8px; border-radius: 6px; }
+    .price { font-weight: 700; }
+    header { display:flex; gap:12px; align-items:center; margin-bottom:12px }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Meme Aggregator — Live Demo</h2>
+    <div id="status">(disconnected)</div>
+  </header>
+
+  <div>
+    <button id="refresh">Load tokens (HTTP)</button>
+    <button id="connect">Connect WS</button>
+  </div>
+  <div id="tokens"></div>
+
+  <script src="https://cdn.socket.io/4.7.0/socket.io.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const tokensEl = document.getElementById('tokens');
+    const refreshBtn = document.getElementById('refresh');
+    const connectBtn = document.getElementById('connect');
+
+    function renderTokens(list) {
+      tokensEl.innerHTML = '';
+      for (const t of list) {
+        const d = document.createElement('div');
+        d.className = 'token';
+        d.id = 'tok-' + t.token_address;
+        d.innerHTML = `<div><strong>${t.token_ticker || ''}</strong> — ${t.token_name || ''}</div>
+          <div class="price">${(t.price_sol || 0).toFixed ? (t.price_sol||0).toFixed(6) : t.price_sol}</div>
+          <div>Volume: ${t.volume_sol || 0}</div>
+          <div>Protocol: ${t.protocol || ''}</div>`;
+        tokensEl.appendChild(d);
+      }
+    }
+
+    async function loadHttp() {
+      statusEl.textContent = '(loading via HTTP)';
+      try {
+        const res = await fetch('/tokens?limit=30');
+        const j = await res.json();
+        renderTokens(j.items || []);
+        statusEl.textContent = '(loaded HTTP)';
+      } catch (e) {
+        statusEl.textContent = '(HTTP error)';
+        console.error(e);
+      }
+    }
+
+    let socket;
+    function connectWS() {
+      if (socket && socket.connected) return;
+      socket = io();
+      socket.on('connect', () => { statusEl.textContent = '(ws connected)'; socket.emit('subscribe:snapshot'); });
+      socket.on('disconnect', () => { statusEl.textContent = '(ws disconnected)'; });
+      socket.on('snapshot', (payload) => {
+        // payload is a map { addr: token }
+        const arr = Object.values(payload || {});
+        renderTokens(arr.slice(0,30));
+      });
+      socket.on('tokens:update', (updates) => {
+        // apply updates to DOM
+        (updates||[]).forEach(u => {
+          const nodeId = 'tok-' + u.token_address;
+          let node = document.getElementById(nodeId);
+          if (!node) {
+            // create
+            const d = document.createElement('div');
+            d.className = 'token';
+            d.id = nodeId;
+            d.innerHTML = `<div><strong>${u.token_ticker||''}</strong> — ${u.token_name||''}</div>
+              <div class="price">${(u.price_sol||0).toFixed ? (u.price_sol||0).toFixed(6) : u.price_sol}</div>
+              <div>Volume: ${u.volume_sol || 0}</div>
+              <div>Protocol: ${u.protocol || ''}</div>`;
+            tokensEl.prepend(d);
+          } else {
+            node.querySelector('.price').textContent = (u.price_sol||0).toFixed ? (u.price_sol||0).toFixed(6) : u.price_sol;
+          }
+        });
+      });
+    }
+
+    refreshBtn.addEventListener('click', loadHttp);
+    connectBtn.addEventListener('click', connectWS);
+
+    // auto-load small set
+    loadHttp();
+  </script>
+</body>
+</html>

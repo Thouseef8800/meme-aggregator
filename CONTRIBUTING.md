@@ -1,0 +1,3 @@
+- This was scaffolded as a prototype for an assignment.
+- To run tests: `npm run test`
+- To run dev server: `npm run dev`

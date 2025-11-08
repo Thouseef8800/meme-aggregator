@@ -1,0 +1,23 @@
+{
+  "info": {
+    "name": "Meme Aggregator",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get tokens",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/tokens?limit=20",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "3000",
+          "path": ["tokens"],
+          "query": [{ "key": "limit", "value": "20" }]
+        }
+      }
+    }
+  ]
+}
