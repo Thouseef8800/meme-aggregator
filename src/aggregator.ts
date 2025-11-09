@@ -56,7 +56,7 @@ export class Aggregator extends EventEmitter {
 
       const newMap: TokenMap = { ...(cached || {}) };
 
-      if (ds) {
+  if (ds) {
         // Diagnostic: log top-level keys and basic info to help map response shapes
         try {
           const topKeys = Object.keys(ds || {}).slice(0, 10);
@@ -116,13 +116,90 @@ export class Aggregator extends EventEmitter {
         console.warn('No DexScreener data available for this poll. Using cached tokens if any.');
       }
 
-      // Compare previous tokens for changes
+        // Also fetch from an additional DEX API (PancakeSwap tokens index) to satisfy multi-source requirement
+        let ps: any = null;
+        try {
+          ps = await getWithRetry<any>('https://api.pancakeswap.info/api/v2/tokens');
+        } catch (e) {
+          console.warn('PancakeSwap fetch failed:', (e as Error).message);
+        }
+
+        if (ps) {
+          try {
+            // ps.data may be an object keyed by address, or an array
+            const entries = ps.data && typeof ps.data === 'object' && !Array.isArray(ps.data)
+              ? Object.values(ps.data)
+              : ps.data || ps.tokens || [];
+            console.info(`PancakeSwap returned ${Array.isArray(entries) ? entries.length : 0} items`);
+            if (Array.isArray(entries) && entries.length > 0) {
+              try { console.info('Sample Pancake item:', JSON.stringify(entries[0]).slice(0, 800)); } catch {}
+            }
+            for (const it of entries) {
+              const addr = (it.address || it.token_address || it.contractAddress || it.id || it.base) && String((it.address || it.token_address || it.contractAddress || it.id || it.base)).toLowerCase();
+              if (!addr) continue;
+              const td: TokenData = {
+                token_address: addr,
+                token_name: it.name || it.tokenName || it.title || it.symbol,
+                token_ticker: (it.symbol || '').toUpperCase(),
+                price_sol: Number(it.price || it.price_usd || it.priceUSD || it.priceUsd) || undefined,
+                volume_sol: undefined,
+                protocol: 'pancakeswap',
+                source: 'pancakeswap',
+                last_updated: Date.now(),
+              };
+              newMap[addr] = newMap[addr] ? mergeToken(newMap[addr], td) : td;
+            }
+          } catch (e) {
+            console.warn('Error processing PancakeSwap data:', (e as Error).message);
+          }
+        }
+
+      // Compare previous tokens for changes with thresholding and spike detection
       const updates: TokenData[] = [];
       for (const k of Object.keys(newMap)) {
         const prev = this.tokens[k];
         const cur = newMap[k];
-        if (!prev) updates.push(cur);
-        else if (cur.price_sol !== prev.price_sol || cur.volume_sol !== prev.volume_sol) updates.push(cur);
+        if (!prev) {
+          updates.push(cur);
+          continue;
+        }
+
+        // compute percent changes where possible
+        let price_change_pct: number | undefined = undefined;
+        let volume_change_pct: number | undefined = undefined;
+        const prevPrice = Number(prev.price_sol || 0);
+        const curPrice = Number(cur.price_sol || 0);
+        const prevVol = Number(prev.volume_sol || 0);
+        const curVol = Number(cur.volume_sol || 0);
+
+        if (prevPrice > 0 && curPrice > 0) {
+          price_change_pct = ((curPrice - prevPrice) / prevPrice) * 100;
+        }
+        if (prevVol > 0 && curVol > 0) {
+          volume_change_pct = ((curVol - prevVol) / prevVol) * 100;
+        }
+
+        const absPriceChange = Math.abs(price_change_pct || 0);
+        const absVolumeChange = Math.abs(volume_change_pct || 0);
+
+        const priceThreshold = Number(config.priceChangePercent || 1);
+        const volumeThreshold = Number(config.volumeChangePercent || 100);
+        const spikeFactor = Number(config.spikeFactor || 3);
+
+        const isSpike = prevVol > 0 && curVol >= prevVol * spikeFactor;
+
+        if (
+          (price_change_pct !== undefined && absPriceChange >= priceThreshold) ||
+          (volume_change_pct !== undefined && absVolumeChange >= volumeThreshold) ||
+          isSpike
+        ) {
+          // attach computed fields to the emitted update copy
+          const out: TokenData = { ...cur } as TokenData;
+          if (price_change_pct !== undefined) out.price_change_pct = Number(price_change_pct.toFixed(4));
+          if (volume_change_pct !== undefined) out.volume_change_pct = Number(volume_change_pct.toFixed(2));
+          if (isSpike) out.is_spike = true;
+          updates.push(out);
+        }
       }
 
       this.tokens = newMap;

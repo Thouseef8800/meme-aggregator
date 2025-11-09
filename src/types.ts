@@ -13,6 +13,10 @@ export interface TokenData {
   protocol?: string;
   source?: string; // which DEX
   last_updated?: number;
+  // computed deltas included when emitted as an update
+  price_change_pct?: number;
+  volume_change_pct?: number;
+  is_spike?: boolean;
 }
 
 export type TokenMap = Record<string, TokenData>;
