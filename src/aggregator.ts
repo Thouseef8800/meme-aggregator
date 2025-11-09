@@ -1,8 +1,8 @@
 import { EventEmitter } from 'events';
 import { TokenData, TokenMap } from './types';
 import config from './config';
-import { getWithRetry } from './httpClient';
-import { getCache, setCache } from './cache';
+// import http client lazily inside fetchAndUpdate to make it easier to mock in tests
+import { getCache, setCache, getMeta, setMeta } from './cache';
 
 function parsePct(v: unknown): number | null {
   if (v === null || v === undefined) return null;
@@ -58,9 +58,40 @@ export class Aggregator extends EventEmitter {
       }
 
       // Fetch from primary API (DexScreener). GeckoTerminal endpoint was unreliable/404 — using DexScreener as primary source.
-      let ds: any = null;
+  // require http client at call-time (helps tests mock it)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getWithRetry } = require('./httpClient');
+
+  let ds: any = null;
       try {
-        ds = await getWithRetry<any>('https://api.dexscreener.com/latest/dex/search?q=solana');
+        // support conditional GETs using ETag / Last-Modified stored in cache meta
+        const meta = await getMeta('dexscreener');
+        const headers: Record<string, string> = {};
+        if (meta?.etag) headers['If-None-Match'] = meta.etag;
+        if (meta?.lastModified) headers['If-Modified-Since'] = meta.lastModified;
+  const resp = await (getWithRetry as any)('https://api.dexscreener.com/latest/dex/search?q=solana', 4, 300, { headers, raw: true });
+        if (resp) {
+          // support either raw wrapper ({ status, data, headers }) or direct payload (tests often return direct object)
+          if ((resp as any).status !== undefined) {
+            if ((resp as any).status === 304) {
+              ds = null; // not modified
+            } else {
+              ds = (resp as any).data;
+              try {
+                const h = (resp as any).headers || {};
+                const metaToSave: any = {};
+                if (h.etag) metaToSave.etag = h.etag;
+                if (h['last-modified']) metaToSave.lastModified = h['last-modified'];
+                if (Object.keys(metaToSave).length) await setMeta('dexscreener', metaToSave);
+              } catch (err) {
+                // ignore meta save errors
+              }
+            }
+          } else {
+            // direct payload
+            ds = resp;
+          }
+        }
       } catch (e) {
         // getWithRetry will abort on 4xx; log and continue with cached data
         console.warn('DexScreener fetch failed:', (e as Error).message);
@@ -142,7 +173,29 @@ export class Aggregator extends EventEmitter {
         // Also fetch from an additional DEX API (PancakeSwap tokens index) to satisfy multi-source requirement
         let ps: any = null;
         try {
-          ps = await getWithRetry<any>('https://api.pancakeswap.info/api/v2/tokens');
+          const meta = await getMeta('pancakeswap');
+          const headers: Record<string, string> = {};
+          if (meta?.etag) headers['If-None-Match'] = meta.etag;
+          if (meta?.lastModified) headers['If-Modified-Since'] = meta.lastModified;
+          const presp = await (getWithRetry as any)('https://api.pancakeswap.info/api/v2/tokens', 4, 300, { headers, raw: true });
+          if (presp) {
+            if ((presp as any).status !== undefined) {
+              if ((presp as any).status === 304) {
+                ps = null;
+              } else {
+                ps = (presp as any).data;
+                try {
+                  const h = (presp as any).headers || {};
+                  const metaToSave: any = {};
+                  if (h.etag) metaToSave.etag = h.etag;
+                  if (h['last-modified']) metaToSave.lastModified = h['last-modified'];
+                  if (Object.keys(metaToSave).length) await setMeta('pancakeswap', metaToSave);
+                } catch (err) {}
+              }
+            } else {
+              ps = presp;
+            }
+          }
         } catch (e) {
           console.warn('PancakeSwap fetch failed:', (e as Error).message);
         }
