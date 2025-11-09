@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.1.0] - 2025-11-09
+- Initial public release snapshot: aggregator core, REST + WebSocket, Redis optional cache, conditional GET support, retry/backoff, metrics (Prometheus), CI, Docker, and deployment docs.
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
 ## [Unreleased]
 - UI: WS status indicator and reconnect countdown
 - UI: Persist last-known prices to localStorage
