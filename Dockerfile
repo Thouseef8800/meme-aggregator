@@ -22,9 +22,12 @@ WORKDIR /usr/src/app
 
 ENV NODE_ENV=production
 
-# Copy package manifests and install only production deps
+# Copy package manifests and install only production deps (skip lifecycle scripts)
+# We must skip npm lifecycle scripts here because postinstall runs the TypeScript build
+# which requires source files and dev deps; those are present only in the build stage.
 COPY package*.json ./
-RUN npm ci --omit=dev
+# --ignore-scripts prevents postinstall from running in the runtime image
+RUN npm ci --omit=dev --ignore-scripts
 
 # Copy built artifacts from the build stage
 COPY --from=build /usr/src/app/dist ./dist
