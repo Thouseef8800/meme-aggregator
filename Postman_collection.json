@@ -1,0 +1,58 @@
+{
+  "info": {
+    "name": "Meme Aggregator API",
+    "_postman_id": "meme-aggregator-collection",
+    "description": "Collection for testing the Meme Aggregator REST and WebSocket endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get tokens (first page)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/tokens?limit=20"
+      }
+    },
+    {
+      "name": "Get tokens (sorted by volume)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/tokens?limit=20&sort=volume_desc"
+      }
+    },
+    {
+      "name": "Get next page (example)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/tokens?limit=20&cursor={{nextCursor}}"
+      }
+    }
+  ],
+  "event": []
+}
+{
+  "info": {
+    "name": "Meme Aggregator",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get tokens",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/tokens?limit=20",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "3000",
+          "path": ["tokens"],
+          "query": [{ "key": "limit", "value": "20" }]
+        }
+      }
+    }
+  ]
+}

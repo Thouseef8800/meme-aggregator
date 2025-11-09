@@ -1,0 +1,37 @@
+{
+  "info": {
+    "name": "meme-aggregator",
+    "_postman_id": "b1a2c3d4-0000-0000-0000-000000000000",
+    "description": "Simple collection for the meme-aggregator REST and metrics endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get tokens",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/tokens"
+      }
+    },
+    {
+      "name": "Get metrics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/metrics"
+      }
+    },
+    {
+      "name": "Get debug circuits",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/debug/circuits"
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:60613" }
+  ]
+}

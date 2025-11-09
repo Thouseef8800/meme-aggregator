@@ -1,0 +1,243 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Meme Aggregator Demo</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; }
+    #ws-dot { width:12px; height:12px; border-radius:50%; display:inline-block; margin-left:6px; }
+    #tokens { display: grid; grid-template-columns: repeat(auto-fill,minmax(260px,1fr)); gap: 12px; }
+    .token { border: 1px solid #ddd; padding: 8px; border-radius: 6px; }
+    .price { font-weight: 700; }
+    .flash {
+      animation: flash-bg 0.8s ease-in-out;
+    }
+    @keyframes flash-bg {
+      0% { background: rgba(255,255,0,0.9); }
+      100% { background: transparent; }
+    }
+    header { display:flex; gap:12px; align-items:center; margin-bottom:12px }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Meme Aggregator — Live Demo</h2>
+    <div id="status">(disconnected)</div>
+    <span id="ws-dot" title="ws status" style="background:crimson"></span>
+  </header>
+
+  <div>
+    <button id="refresh">Load tokens (HTTP)</button>
+    <label for="protocol">Protocol:</label>
+    <input id="protocol" placeholder="e.g. solana" style="width:120px" />
+    <label for="sort">Sort:</label>
+    <select id="sort">
+      <option value="">(none)</option>
+      <option value="price_desc">Price ↓</option>
+      <option value="price_asc">Price ↑</option>
+      <option value="volume_desc">Volume ↓</option>
+      <option value="volume_asc">Volume ↑</option>
+    </select>
+    <button id="connect">Connect WS</button>
+  </div>
+  <div id="tokens"></div>
+
+  <script>
+    // Using native WebSocket client to match server 'ws' implementation
+    const statusEl = document.getElementById('status');
+    const tokensEl = document.getElementById('tokens');
+    const refreshBtn = document.getElementById('refresh');
+    const connectBtn = document.getElementById('connect');
+
+    // in-memory token map kept on the client so filters can be applied without extra HTTP calls
+    const tokensMap = {};
+
+    function renderTokens(list) {
+      tokensEl.innerHTML = '';
+      if (!list || list.length === 0) {
+        const msg = document.createElement('div');
+        msg.textContent = 'No tokens available at the moment.';
+        msg.style.color = '#666';
+        tokensEl.appendChild(msg);
+        return;
+      }
+      for (const t of list) {
+        const d = document.createElement('div');
+        d.className = 'token';
+        d.id = 'tok-' + t.token_address;
+        // Load persisted price if available
+        const persisted = loadPersistedPrices();
+        const persistedPrice = persisted[t.token_address];
+        const displayPrice = (t.price_sol !== undefined && t.price_sol !== null) ? t.price_sol : persistedPrice;
+        d.innerHTML = `<div><strong>${t.token_ticker || ''}</strong> — ${t.token_name || ''}</div>
+            <div class="price">${(displayPrice || 0).toFixed ? (displayPrice||0).toFixed(6) : displayPrice}</div>
+            <div>Volume: ${t.volume_sol || 0}</div>
+            <div>Protocol: ${t.protocol || ''}</div>`;
+        tokensEl.appendChild(d);
+      }
+    }
+
+    function applyFilterToMap() {
+      const proto = (document.getElementById('protocol') && document.getElementById('protocol').value) || '';
+      const sort = (document.getElementById('sort') && document.getElementById('sort').value) || '';
+      let arr = Object.values(tokensMap || {});
+      if (proto) {
+        arr = arr.filter(x => (x.protocol || '').toLowerCase().includes(proto.toLowerCase()));
+      }
+      // simple sorts supported client-side for demo
+      if (sort === 'price_desc') arr.sort((a,b) => (b.price_sol||0)-(a.price_sol||0));
+      else if (sort === 'price_asc') arr.sort((a,b) => (a.price_sol||0)-(b.price_sol||0));
+      else if (sort === 'volume_desc') arr.sort((a,b) => (b.volume_sol||0)-(a.volume_sol||0));
+      else if (sort === 'volume_asc') arr.sort((a,b) => (a.volume_sol||0)-(b.volume_sol||0));
+      // show up to 30 by default
+      renderTokens(arr.slice(0, 30));
+    }
+
+      function loadPersistedPrices() {
+        try {
+          const raw = localStorage.getItem('lastPrices');
+          if (!raw) return {};
+          return JSON.parse(raw);
+        } catch { return {}; }
+      }
+
+      function savePersistedPrice(address, price) {
+        try {
+          const cur = loadPersistedPrices();
+          cur[address] = price;
+          localStorage.setItem('lastPrices', JSON.stringify(cur));
+        } catch {}
+      }
+
+    async function loadHttp() {
+      statusEl.textContent = '(loading via HTTP)';
+      try {
+          const proto = (document.getElementById('protocol') && document.getElementById('protocol').value) || '';
+          const sort = (document.getElementById('sort') && document.getElementById('sort').value) || '';
+          const params = new URLSearchParams();
+          params.set('limit', '30');
+          if (proto) params.set('protocol', proto);
+          if (sort) params.set('sort', sort);
+          const res = await fetch('/tokens?' + params.toString());
+          if (!res.ok) {
+            const text = await res.text();
+            statusEl.textContent = `(HTTP ${res.status})`;
+            console.error('Tokens HTTP error:', res.status, text);
+            tokensEl.innerHTML = '';
+            const err = document.createElement('div');
+            err.style.color = 'crimson';
+            err.textContent = `Error fetching tokens: ${res.status}`;
+            tokensEl.appendChild(err);
+            return;
+          }
+          const j = await res.json();
+          // populate client-side map from HTTP snapshot so filters can be applied locally
+          try {
+            const items = j.items || [];
+            items.forEach(it => { if (it && it.token_address) tokensMap[it.token_address] = it; });
+          } catch (e) {}
+          applyFilterToMap();
+          statusEl.textContent = '(loaded HTTP)';
+      } catch (e) {
+        statusEl.textContent = '(HTTP error)';
+        console.error(e);
+      }
+    }
+
+    let ws;
+    let reconnectAttempts = 0;
+    const maxReconnectDelay = 30000; // 30s
+
+    function applyPriceUpdate(node, newPrice) {
+      const priceEl = node.querySelector('.price');
+      if (!priceEl) return;
+      // parse previous price if present
+      const prev = parseFloat(priceEl.textContent) || 0;
+      const formatted = (newPrice || 0).toFixed ? (newPrice || 0).toFixed(6) : String(newPrice || 0);
+      priceEl.textContent = formatted;
+      // flash when price changed
+      if (newPrice !== undefined && newPrice !== null && prev !== newPrice) {
+        node.classList.add('flash');
+        setTimeout(() => node.classList.remove('flash'), 800);
+      }
+      // persist last-known price for this token
+      const id = node.id && node.id.replace(/^tok-/, '');
+      if (id) savePersistedPrice(id, newPrice);
+    }
+
+    function handleUpdates(updates) {
+      // update in-memory map and then re-apply client-side filters/rendering
+      (updates||[]).forEach(u => {
+        if (!u || !u.token_address) return;
+        // merge incoming fields into in-memory token
+        tokensMap[u.token_address] = Object.assign({}, tokensMap[u.token_address] || {}, u);
+        // persist latest price
+        if (u.price_sol !== undefined && u.price_sol !== null) savePersistedPrice(u.token_address, u.price_sol);
+      });
+      // re-render visible set according to current filters
+      applyFilterToMap();
+    }
+
+    function connectWS() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+
+      const url = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/live';
+      ws = new WebSocket(url);
+
+      const wsDot = document.getElementById('ws-dot');
+      function setDot(color) { if (wsDot) wsDot.style.background = color; }
+
+      ws.addEventListener('open', () => {
+        statusEl.textContent = '(ws connected)';
+        setDot('limegreen');
+        reconnectAttempts = 0;
+        ws.send(JSON.stringify({ action: 'subscribe' }));
+      });
+
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.event === 'tokens:update') {
+            handleUpdates(msg.data || []);
+          } else if (msg.event === 'subscribed') {
+            console.info('WS subscribed', msg.data);
+          } else if (msg.event === 'snapshot') {
+            const arr = Object.values(msg.data || {});
+            // seed the local map with the snapshot and render filtered
+            try { arr.forEach(it => { if (it && it.token_address) tokensMap[it.token_address] = it; }); } catch (e) {}
+            applyFilterToMap();
+          }
+        } catch (err) {
+          console.error('WS message parse error', err);
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        statusEl.textContent = '(ws disconnected)';
+        setDot('crimson');
+        // attempt reconnect with backoff
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), maxReconnectDelay);
+        reconnectAttempts++;
+        statusEl.textContent = `(ws disconnected) reconnecting in ${Math.round(delay/1000)}s`;
+        const timeoutId = setTimeout(() => {
+          connectWS();
+        }, delay);
+        // do not keep timer alive in older browsers
+        try { if (typeof timeoutId === 'object' && timeoutId && (timeoutId).unref) (timeoutId).unref(); } catch {}
+      });
+      ws.addEventListener('error', (e) => { statusEl.textContent = '(ws error)'; setDot('orange'); console.error(e); });
+    }
+
+  refreshBtn.addEventListener('click', loadHttp);
+  connectBtn.addEventListener('click', connectWS);
+
+  // apply filters on input changes without making new HTTP calls
+  document.getElementById('protocol').addEventListener('input', () => applyFilterToMap());
+  document.getElementById('sort').addEventListener('change', () => applyFilterToMap());
+
+    // auto-load small set
+    loadHttp();
+  </script>
+</body>
+</html>
