@@ -8,8 +8,10 @@ WORKDIR /usr/src/app
 RUN apk add --no-cache python3 make g++
 
 # Copy package manifests and install all deps (including dev)
+# Skip lifecycle scripts during install to avoid running `postinstall`
+# (which runs the TypeScript build) before source files are copied.
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 # Copy the rest of the sources and build
 COPY . .
