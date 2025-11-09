@@ -7,11 +7,11 @@ This repository contains a prototype Real-time Data Aggregation Service for meme
 
 See `DELIVERY.md` for final packaging instructions and a short demo script to record the 1–2 minute video.
 
-Deployed URL (optional)
------------------------
-If you deploy this service to a free host (Render, Railway, Fly, or Heroku), add the public URL here. Example:
+Deployed URL
+------------
+This project is deployed (demo) at:
 
-- Deployed: https://meme-aggregator.example.com  (replace with actual URL after deploy)
+- Deployed: https://meme-aggregator.onrender.com
 
 Quick deploy (Render)
 ---------------------
@@ -41,9 +41,13 @@ npm run dev
 
 3. Endpoints
 - GET /tokens?limit=20&cursor=...&sort=volume_desc
-- WebSocket: connect to server and emit `subscribe:snapshot` to get initial data. Listen for `tokens:update` events.
+- WebSocket: connect to server and emit `subscribe` (JSON {"action":"subscribe"}) to get initial snapshot. Listen for `tokens:update` events.
 
 Configuration: see `.env.example`.
+
+Recommended environment variables (Render):
+- POLL_INTERVAL_SECONDS (default 30) — increase to 60 if you see external 429 rate-limits.
+- REDIS_URL — optional, provide for persistent caching across restarts.
 
 Notes and assumptions:
 - Uses DexScreener and GeckoTerminal endpoints for fetching tokens.
