@@ -4,7 +4,7 @@ FROM node:18-alpine AS build
 
 WORKDIR /usr/src/app
 
-# Ensure bash and build tools are available for npm scripts
+# Ensure build tools are available for native modules
 RUN apk add --no-cache python3 make g++
 
 # Copy package manifests and install all deps (including dev)
@@ -38,23 +38,4 @@ COPY --from=build /usr/src/app/package.json ./package.json
 EXPOSE 3000
 
 # Start command - run the compiled server
-CMD ["node", "dist/server.js"]
-FROM node:18-alpine
-
-# Create app directory
-WORKDIR /usr/src/app
-
-# Install build deps
-COPY package*.json ./
-RUN npm ci --only=production || npm ci
-
-# Copy source and build
-COPY . .
-RUN npm run build
-
-# Expose port
-ENV PORT=60613
-EXPOSE ${PORT}
-
-# Run the built server
 CMD ["node", "dist/server.js"]
