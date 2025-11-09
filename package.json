@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
   "build": "tsc -p tsconfig.json",
-  "postinstall": "npm run build",
+  "postinstall": "npm run build && node ./scripts/copyDist.js",
   "start": "node src/dist/server.js",
     "test": "jest --passWithNoTests",
     "serve": "http-server public -p 3000"
