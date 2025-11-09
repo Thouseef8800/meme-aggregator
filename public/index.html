@@ -50,6 +50,9 @@
     const refreshBtn = document.getElementById('refresh');
     const connectBtn = document.getElementById('connect');
 
+    // in-memory token map kept on the client so filters can be applied without extra HTTP calls
+    const tokensMap = {};
+
     function renderTokens(list) {
       tokensEl.innerHTML = '';
       if (!list || list.length === 0) {
@@ -63,16 +66,32 @@
         const d = document.createElement('div');
         d.className = 'token';
         d.id = 'tok-' + t.token_address;
-          // Load persisted price if available
-          const persisted = loadPersistedPrices();
-          const persistedPrice = persisted[t.token_address];
-          const displayPrice = (t.price_sol !== undefined && t.price_sol !== null) ? t.price_sol : persistedPrice;
-          d.innerHTML = `<div><strong>${t.token_ticker || ''}</strong> — ${t.token_name || ''}</div>
+        // Load persisted price if available
+        const persisted = loadPersistedPrices();
+        const persistedPrice = persisted[t.token_address];
+        const displayPrice = (t.price_sol !== undefined && t.price_sol !== null) ? t.price_sol : persistedPrice;
+        d.innerHTML = `<div><strong>${t.token_ticker || ''}</strong> — ${t.token_name || ''}</div>
             <div class="price">${(displayPrice || 0).toFixed ? (displayPrice||0).toFixed(6) : displayPrice}</div>
             <div>Volume: ${t.volume_sol || 0}</div>
             <div>Protocol: ${t.protocol || ''}</div>`;
         tokensEl.appendChild(d);
       }
+    }
+
+    function applyFilterToMap() {
+      const proto = (document.getElementById('protocol') && document.getElementById('protocol').value) || '';
+      const sort = (document.getElementById('sort') && document.getElementById('sort').value) || '';
+      let arr = Object.values(tokensMap || {});
+      if (proto) {
+        arr = arr.filter(x => (x.protocol || '').toLowerCase().includes(proto.toLowerCase()));
+      }
+      // simple sorts supported client-side for demo
+      if (sort === 'price_desc') arr.sort((a,b) => (b.price_sol||0)-(a.price_sol||0));
+      else if (sort === 'price_asc') arr.sort((a,b) => (a.price_sol||0)-(b.price_sol||0));
+      else if (sort === 'volume_desc') arr.sort((a,b) => (b.volume_sol||0)-(a.volume_sol||0));
+      else if (sort === 'volume_asc') arr.sort((a,b) => (a.volume_sol||0)-(b.volume_sol||0));
+      // show up to 30 by default
+      renderTokens(arr.slice(0, 30));
     }
 
       function loadPersistedPrices() {
@@ -113,7 +132,12 @@
             return;
           }
           const j = await res.json();
-          renderTokens(j.items || []);
+          // populate client-side map from HTTP snapshot so filters can be applied locally
+          try {
+            const items = j.items || [];
+            items.forEach(it => { if (it && it.token_address) tokensMap[it.token_address] = it; });
+          } catch (e) {}
+          applyFilterToMap();
           statusEl.textContent = '(loaded HTTP)';
       } catch (e) {
         statusEl.textContent = '(HTTP error)';
@@ -143,24 +167,16 @@
     }
 
     function handleUpdates(updates) {
+      // update in-memory map and then re-apply client-side filters/rendering
       (updates||[]).forEach(u => {
-        const nodeId = 'tok-' + u.token_address;
-        let node = document.getElementById(nodeId);
-        if (!node) {
-          const d = document.createElement('div');
-          d.className = 'token';
-          d.id = nodeId;
-          d.innerHTML = `<div><strong>${u.token_ticker||''}</strong> — ${u.token_name||''}</div>
-            <div class="price">${(u.price_sol||0).toFixed ? (u.price_sol||0).toFixed(6) : u.price_sol}</div>
-            <div>Volume: ${u.volume_sol || 0}</div>
-            <div>Protocol: ${u.protocol || ''}</div>`;
-          tokensEl.prepend(d);
-          // persist price for newly created node
-          savePersistedPrice(u.token_address, u.price_sol);
-        } else {
-          applyPriceUpdate(node, u.price_sol);
-        }
+        if (!u || !u.token_address) return;
+        // merge incoming fields into in-memory token
+        tokensMap[u.token_address] = Object.assign({}, tokensMap[u.token_address] || {}, u);
+        // persist latest price
+        if (u.price_sol !== undefined && u.price_sol !== null) savePersistedPrice(u.token_address, u.price_sol);
       });
+      // re-render visible set according to current filters
+      applyFilterToMap();
     }
 
     function connectWS() {
@@ -188,7 +204,9 @@
             console.info('WS subscribed', msg.data);
           } else if (msg.event === 'snapshot') {
             const arr = Object.values(msg.data || {});
-            renderTokens(arr.slice(0,30));
+            // seed the local map with the snapshot and render filtered
+            try { arr.forEach(it => { if (it && it.token_address) tokensMap[it.token_address] = it; }); } catch (e) {}
+            applyFilterToMap();
           }
         } catch (err) {
           console.error('WS message parse error', err);
@@ -213,6 +231,10 @@
 
   refreshBtn.addEventListener('click', loadHttp);
   connectBtn.addEventListener('click', connectWS);
+
+  // apply filters on input changes without making new HTTP calls
+  document.getElementById('protocol').addEventListener('input', () => applyFilterToMap());
+  document.getElementById('sort').addEventListener('change', () => applyFilterToMap());
 
     // auto-load small set
     loadHttp();

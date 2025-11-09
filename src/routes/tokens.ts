@@ -35,19 +35,39 @@ const plugin: FastifyPluginAsync = async (fastify: FastifyInstance, opts) => {
       arr = arr.filter((t) => (t as any)[changeField] !== null && (t as any)[changeField] !== undefined && Number((t as any)[changeField]) > filterChangeGt);
     }
 
-    // sorting options: price_desc, price_asc, volume_desc, volume_asc, change
-    if (sort === 'price_desc') arr.sort((a, b) => (b.price_sol || 0) - (a.price_sol || 0));
-    else if (sort === 'price_asc') arr.sort((a, b) => (a.price_sol || 0) - (b.price_sol || 0));
-    else if (sort === 'volume_desc') arr.sort((a, b) => (b.volume_sol || 0) - (a.volume_sol || 0));
-    else if (sort === 'volume_asc') arr.sort((a, b) => (a.volume_sol || 0) - (b.volume_sol || 0));
-    else if (sort === 'change' && changeField) {
-      const dir = (q.order || 'desc').toLowerCase() === 'asc' ? 1 : -1;
-      arr.sort((a, b) => {
-        const av = Number((a as any)[changeField] ?? 0);
-        const bv = Number((b as any)[changeField] ?? 0);
+    // sorting options (null/undefined values are treated as "last"):
+    // - price_desc / price_asc (price_sol)
+    // - volume_desc / volume_asc (volume_sol)
+    // - marketcap_desc / marketcap_asc (market_cap)
+    // - change (uses provider-mapped price_change_{period}_pct; requires period)
+    // - volume_change (uses volume_change_24h_pct when available)
+    const normalizeVal = (v: any): number | null => {
+      if (v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    // comparator that places null/undefined values at the end of the sorted list
+    const byField = (field: string, order: 'asc' | 'desc' = 'desc') => {
+      const dir = order === 'asc' ? 1 : -1;
+      return (a: any, b: any) => {
+        const av = normalizeVal((a as any)[field]);
+        const bv = normalizeVal((b as any)[field]);
+        if (av === null && bv === null) return 0;
+        if (av === null) return 1; // a goes after b
+        if (bv === null) return -1; // b goes after a
+        if (av === bv) return 0;
         return (av - bv) * dir;
-      });
-    }
+      };
+    };
+
+    const order = (q.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+    if (sort === 'price_desc' || sort === 'price_asc') arr.sort(byField('price_sol', sort === 'price_asc' ? 'asc' : 'desc'));
+    else if (sort === 'volume_desc' || sort === 'volume_asc') arr.sort(byField('volume_sol', sort === 'volume_asc' ? 'asc' : 'desc'));
+    else if (sort === 'marketcap_desc' || sort === 'marketcap_asc') arr.sort(byField('market_cap', sort === 'marketcap_asc' ? 'asc' : 'desc'));
+    else if (sort === 'change' && changeField) arr.sort(byField(changeField, order));
+    else if (sort === 'volume_change') arr.sort(byField('volume_change_24h_pct', order));
 
     let start = 0;
     if (cursor) {

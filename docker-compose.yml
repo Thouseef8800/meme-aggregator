@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    environment:
+      - PORT=60613
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "60613:60613"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

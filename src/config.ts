@@ -6,6 +6,8 @@ const config = {
   priceChangePercent: Number(process.env.PRICE_CHANGE_PERCENT || 1),
   volumeChangePercent: Number(process.env.VOLUME_CHANGE_PERCENT || 100),
   spikeFactor: Number(process.env.SPIKE_FACTOR || 3),
+  circuitFailures: Number(process.env.CIRCUIT_FAILURES || 3),
+  circuitCooldownMs: Number(process.env.CIRCUIT_COOLDOWN_MS || 60000),
 };
 
 export default config;
