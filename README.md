@@ -1,3 +1,46 @@
+# Meme Aggregator
+
+Lightweight Node.js + TypeScript service that aggregates "meme-coin" listings from multiple DEX sources, exposes a REST API and WebSocket updates, and provides Prometheus metrics. This repo contains CI, Docker, and deployment guidance.
+
+Quick links
+- Code: https://github.com/Thouseef8800/meme-aggregator
+- Releases: https://github.com/Thouseef8800/meme-aggregator/releases
+
+Getting started (local)
+
+Prerequisites: Node 18+, npm, Docker (optional)
+
+1. Install dependencies
+
+```powershell
+npm ci
+```
+
+2. Run tests
+
+```powershell
+npm test
+```
+
+3. Start locally (dev)
+
+```powershell
+npm run build
+npm start
+# or with docker-compose
+docker-compose up --build
+```
+
+Endpoints
+- GET /tokens — paginated token list
+- GET /metrics — Prometheus metrics
+- WebSocket: /ws — subscribe to real-time updates
+
+Deployment
+See `DEPLOY.md` for Render/Railway instructions and recommendations.
+
+Contributing
+See `CONTRIBUTING.md` for guidelines.
 # Meme Aggregator (prototype)
 
 This repository contains a prototype Real-time Data Aggregation Service for meme coins.
