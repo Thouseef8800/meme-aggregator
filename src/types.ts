@@ -13,6 +13,11 @@ export interface TokenData {
   protocol?: string;
   source?: string; // which DEX
   last_updated?: number;
+  // provider-reported period change fields (Option A mapping)
+  price_change_1h_pct?: number | null;
+  price_change_24h_pct?: number | null;
+  price_change_7d_pct?: number | null;
+  volume_change_24h_pct?: number | null;
   // computed deltas included when emitted as an update
   price_change_pct?: number;
   volume_change_pct?: number;

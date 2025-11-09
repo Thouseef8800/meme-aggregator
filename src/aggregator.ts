@@ -4,6 +4,18 @@ import config from './config';
 import { getWithRetry } from './httpClient';
 import { getCache, setCache } from './cache';
 
+function parsePct(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string') {
+    const cleaned = v.replace('%', '').trim();
+    const n = parseFloat(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  // nested shapes like { h1: '1.2', h24: '3.4' } are handled by callers
+  return null;
+}
+
 function mergeToken(a: TokenData, b: TokenData): TokenData {
   return { ...a, ...b, last_updated: Date.now() };
 }
@@ -82,6 +94,12 @@ export class Aggregator extends EventEmitter {
             const addr = tokenObj.address || tokenObj.contractAddress;
             if (!addr) continue;
             const key = String(addr).toLowerCase();
+            // Attempt to map provider-reported period change fields where available
+            const priceChange1h = parsePct(it?.priceChange?.h1 ?? it?.price_change_1h ?? tokenObj?.price_change_1h ?? it?.price_change_1h_pct ?? tokenObj?.priceChange?.h1);
+            const priceChange24h = parsePct(it?.priceChange?.h24 ?? it?.price_change_24h ?? tokenObj?.price_change_24h ?? it?.price_change_24h_pct ?? tokenObj?.priceChange?.h24);
+            const priceChange7d = parsePct(it?.priceChange?.d7 ?? it?.priceChange?.d7 ?? it?.price_change_7d ?? tokenObj?.price_change_7d ?? it?.price_change_7d_pct);
+            const volChange24h = parsePct(it?.volumeChange?.h24 ?? it?.volume_change_24h ?? tokenObj?.volume_change_24h ?? it?.volume_change_24h_pct);
+
             const td: TokenData = {
               token_address: key,
               token_name: tokenObj.name || tokenObj.tokenName || it.name || it.pairName,
@@ -93,6 +111,11 @@ export class Aggregator extends EventEmitter {
                 canonical_symbol: (tokenObj.symbol || tokenObj.tokenTicker || it.symbol || '').toUpperCase(),
               source: 'dexscreener',
               last_updated: Date.now(),
+              // attach any mapped provider period fields
+              price_change_1h_pct: priceChange1h ?? null,
+              price_change_24h_pct: priceChange24h ?? null,
+              price_change_7d_pct: priceChange7d ?? null,
+              volume_change_24h_pct: volChange24h ?? null,
             };
             newMap[key] = newMap[key] ? mergeToken(newMap[key], td) : td;
           }
@@ -137,6 +160,9 @@ export class Aggregator extends EventEmitter {
             for (const it of entries) {
               const addr = (it.address || it.token_address || it.contractAddress || it.id || it.base) && String((it.address || it.token_address || it.contractAddress || it.id || it.base)).toLowerCase();
               if (!addr) continue;
+              // Map possible PancakeSwap-style change fields (common variants)
+              const pPrice24 = parsePct(it.price_change_percentage_24h ?? it.price_change_24h ?? it.change_24h ?? it.priceChange24h);
+              const pVol24 = parsePct(it.volume_change_24h ?? it.volume_change_percentage_24h ?? it.volumeChange24h);
               const td: TokenData = {
                 token_address: addr,
                 token_name: it.name || it.tokenName || it.title || it.symbol,
@@ -146,6 +172,8 @@ export class Aggregator extends EventEmitter {
                 protocol: 'pancakeswap',
                 source: 'pancakeswap',
                 last_updated: Date.now(),
+                price_change_24h_pct: pPrice24 ?? null,
+                volume_change_24h_pct: pVol24 ?? null,
               };
               newMap[addr] = newMap[addr] ? mergeToken(newMap[addr], td) : td;
             }
